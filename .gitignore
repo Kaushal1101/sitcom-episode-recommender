@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Data (scraped — large, regenerable)
+data/raw/
+
+# Vector store (regenerable from mood_enriched.json)
+data/chroma/
+
+# Env
+.env
+
+# macOS
+.DS_Store
+
+# Editor / tooling local state
+.claude/

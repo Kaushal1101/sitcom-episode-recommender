@@ -1,0 +1,19 @@
+ParsedPreference = {
+    "mood": {
+        "energy": ...,
+        "humor": ...,
+        "sadness": ...,
+        "comfort": ...
+    },
+    "episode_style": {
+        "specialness": ...,
+        "novelty": ...,
+        "setting_variation": ...,
+        "continuity_heaviness": ...
+    },
+    "hard_constraints": {
+        "excluded_shows": [...],
+        "excluded_episodes": [...],
+        "excluded_tags": [...]
+    }
+}

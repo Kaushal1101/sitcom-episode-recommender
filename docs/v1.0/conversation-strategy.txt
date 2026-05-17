@@ -1,0 +1,40 @@
+---
+config:
+  layout: elk
+---
+flowchart TB
+    A["User"] --> B{"First Input"}
+    B -->|Yes| C["Open Chat"]
+    B -->|No| D{"Confidence < 0.4"}
+    
+    D -->|Yes| E["Multiple Choice (Attribute)"]
+    D -->|No| F{"Confidence < 0.6"}
+    F -->|Yes| G["Y/N (Attribute)"]
+    F -->|No| H{"Confidence < 0.7"}
+
+    H -->|Yes| I["Multiple Choice (Items)"]
+    H -->|No| J{"Confidence < 0.85"}
+    J -->|Yes| K["Y/N (Items)"]
+    J -->|No| L{"Confidence > 0.9"}
+
+    L -->|Recommend| M["Episode Recommendation"]
+    M -->|Feedback| N{"Accepted"}
+    N -->|Yes| P["Recommendation Feedback (Rating 1 - 5)"]
+    N -->|No| O["Soft Critiquing (Attributes)"]
+
+    O --> Q{"Soft Critique Score Evaluation"}
+    Q -->|< 0.4| E
+    Q -->|< 0.6| G
+    Q -->|< 0.7| I
+    Q -->|< 0.85| K
+    Q -->|> 0.9| M
+    P --> Z["Exit"]
+    
+    classDef decision fill:#eef2ff,stroke:#818cf8,color:#000;
+    classDef action fill:#f0fdf4,stroke:#4ade80,color:#000;
+    classDef terminal fill:#fefce8,stroke:#facc15,color:#000;
+
+    class A,Z terminal;
+    class B,D,F,H,J,L,N,Q decision;
+    class C,E,G,I,K,M,O,P action;
+    

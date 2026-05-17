@@ -1,0 +1,248 @@
+---
+description: Enrichment implementation rules — text formatter, DeBERTa zero-shot mood tagger, CLI.
+globs:
+  - backend/enrichment/**
+alwaysApply: false
+---
+# Enrichment Implementation Guide
+
+**Full plan:** `docs/ENRICHMENT_PLAN.md` — read it first.
+**Input:** `data/raw/{episode_id}/extracted_data.json` (already exists from scraping phase)
+**Output:** `data/raw/{episode_id}/mood_enriched.json`
+
+---
+
+## File map
+
+```
+backend/enrichment/
+  __init__.py
+  text_formatter.py   ← NEW — pure function, no ML imports
+  mood_tagger.py      ← NEW — loads DeBERTa, runs classification, writes output
+  __main__.py         ← NEW — plain Python CLI
+```
+
+No changes to `backend/scraping/`. No database. No LangGraph.
+
+---
+
+## Step 1 — `pyproject.toml`
+
+Add to the `dependencies` list:
+```toml
+"torch>=2.0",
+"transformers>=4.40",
+```
+
+---
+
+## Step 2 — `text_formatter.py`
+
+Pure function. **No ML imports.** No `torch`, no `transformers`. Just string manipulation.
+
+```python
+def format_for_zero_shot(episode_data: dict) -> str | None:
+    """
+    Convert extracted_data.json dict to a text string suitable as a DeBERTa NLI premise.
+    Returns None if there is no narrative content to classify.
+    """
+```
+
+### Token budget
+DeBERTa v3 base max = 512 tokens total (premise + hypothesis). Leave room for the hypothesis (~12 tokens). Premise budget ≈ 480 tokens ≈ **1,600 chars** of English prose.
+
+Allocate:
+- Synopsis: truncate to **1,200 chars**
+- Cold open: truncate to **300 chars**
+- Header: episode title + series + season/episode (~80 chars)
+
+### Output format
+```
+{episode_title} – {series_title}, Season {season} Episode {episode}
+
+{synopsis}
+
+Cold open: {cold_open}
+```
+
+### Exact rules
+1. Always include the header line (title + series + season/ep number).
+2. If `synopsis` is non-empty: include it, truncated to 1,200 chars at the last word boundary before the limit.
+3. If `cold_open` is non-empty: append it prefixed with `"Cold open: "`, truncated to 300 chars at word boundary.
+4. Collapse internal whitespace runs (the wiki scraper produces `\n\n\n` runs): replace 3+ consecutive newlines with `\n\n`; strip leading/trailing whitespace from each section.
+5. If **both** `synopsis` and `cold_open` are empty/null: return `None`.
+
+### Helper
+```python
+def _truncate_at_word(text: str, max_chars: int) -> str:
+    """Truncate to max_chars at the last word boundary. No ellipsis."""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(None, 1)[0]
+```
+
+### Test this function manually before proceeding
+```python
+import json
+from backend.enrichment.text_formatter import format_for_zero_shot
+d = json.load(open("data/raw/the_office_s02_e04/extracted_data.json"))
+print(format_for_zero_shot(d))
+print(len(format_for_zero_shot(d)))  # Should be < 1600
+```
+
+---
+
+## Step 3 — `mood_tagger.py`
+
+Loads the DeBERTa zero-shot pipeline and classifies one episode at a time.
+
+### Model
+```python
+MODEL_ID = "cross-encoder/nli-deberta-v3-base"
+```
+Loaded via `transformers.pipeline("zero-shot-classification", model=MODEL_ID)`.
+Load once and reuse across episodes — do NOT reload per episode.
+
+### Scalar dimensions — run with `multi_label=False` (binary pair)
+
+```python
+DIMENSION_LABEL_PAIRS: dict[str, tuple[str, str]] = {
+    "humor_level":  ("funny and humorous",       "serious and humorless"),
+    "energy_level": ("high energy and chaotic",  "slow-paced and calm"),
+    "comfort_level":("wholesome and comforting", "tense and uncomfortable"),
+    "sadness_level":("sad and emotionally heavy","light-hearted and upbeat"),
+}
+```
+
+For each dimension, call the classifier with both labels. The score of the **positive label** (first in the pair) is the float value for that dimension. Range [0.0, 1.0].
+
+### Tone tags — run with `multi_label=True`
+
+```python
+TONE_CANDIDATES: list[str] = [
+    "awkward", "chaotic", "lighthearted", "romantic", "tense",
+    "heartwarming", "cringe", "silly", "dramatic", "emotional",
+    "wholesome", "dark", "bittersweet",
+]
+TONE_THRESHOLD: float = 0.4
+```
+
+Run once with all 13 labels and `multi_label=True`. Tags with score ≥ `TONE_THRESHOLD` are included in `mood.tone`. If none exceed threshold, `mood.tone = []`.
+
+### Main function signature
+
+```python
+def enrich_episode(
+    episode_id: str,
+    data_root: Path,
+    classifier,   # the loaded transformers pipeline
+) -> dict:
+    """
+    Read extracted_data.json, format text, run zero-shot classification,
+    write mood_enriched.json, return the written dict.
+    """
+```
+
+### Write output
+Write `data/raw/{episode_id}/mood_enriched.json` with the schema from `docs/ENRICHMENT_PLAN.md` §3.
+
+Include `"input_text"` in the output so the formatted text is inspectable without re-running.
+
+### Skipped episodes
+If `format_for_zero_shot()` returns `None`, write:
+```json
+{
+  "episode_id": "...",
+  "model_id": "cross-encoder/nli-deberta-v3-base",
+  "enriched_at": "<ISO timestamp>",
+  "skipped": true,
+  "reason": "no_narrative_content"
+}
+```
+Do not call the classifier. Do not raise an error.
+
+---
+
+## Step 4 — `__main__.py`
+
+Plain Python CLI. No LangGraph.
+
+### Args
+```
+--episode-id <id>          Enrich one episode
+--season <slug> <n>        Enrich all episodes in a season
+--all <slug>               Enrich all scraped episodes for a series
+--show-text                Print the formatted input text and exit (no model call)
+--skip-existing            Skip episodes where mood_enriched.json already exists
+```
+
+### Series registry
+```python
+from backend.scraping.series_config import THE_OFFICE, SeriesConfig
+
+SERIES_REGISTRY: dict[str, SeriesConfig] = {
+    "the_office": THE_OFFICE,
+}
+```
+
+### Episode discovery
+For `--season` and `--all`: list `data/raw/` directories matching `{series_slug}_s{nn}_e{nn}`. Do NOT re-run scraper discovery — read from disk. Pattern:
+```python
+import re
+pattern = re.compile(rf"^{re.escape(series_slug)}_s\d{{2}}_e\d{{2}}$")
+episode_ids = sorted(d for d in os.listdir(data_root) if pattern.match(d))
+```
+For `--season`: also filter by `_s{n:02d}_`.
+
+### Model loading
+Load the classifier once before the episode loop, not inside the loop:
+```python
+from transformers import pipeline as hf_pipeline
+classifier = hf_pipeline("zero-shot-classification", model=MODEL_ID)
+```
+
+### Progress
+Print to stderr: `enriching the_office_s02_e04 ...` per episode. Print summary at end: `Done: X enriched, Y skipped, Z failed`.
+
+### `--show-text` mode
+Load `extracted_data.json`, call `format_for_zero_shot`, print to stdout, exit. No model loaded.
+
+---
+
+## Verification
+
+```bash
+# Install new deps first
+pip install -e .
+
+# Test formatter in isolation (no model needed)
+python -m backend.enrichment --episode-id the_office_s02_e04 --show-text
+
+# Enrich one episode
+python -m backend.enrichment --episode-id the_office_s02_e04
+
+# Check output shape
+python -c "
+import json
+d = json.load(open('data/raw/the_office_s02_e04/mood_enriched.json'))
+assert 'mood' in d
+assert 'humor_level' in d['mood']
+assert 'tone' in d['mood']
+assert isinstance(d['mood']['tone'], list)
+assert 0.0 <= d['mood']['humor_level'] <= 1.0
+print('shape: OK')
+print('humor_level:', d['mood']['humor_level'])
+print('tone:', d['mood']['tone'])
+"
+
+# Enrich a full season (will take a few minutes on CPU)
+python -m backend.enrichment --season the_office 2
+
+# Verify skipped episodes handled gracefully
+python -c "
+import json
+d = json.load(open('data/raw/the_office_s07_e13/mood_enriched.json'))
+assert d.get('skipped') == True
+print('skip handling: OK')
+"
+```

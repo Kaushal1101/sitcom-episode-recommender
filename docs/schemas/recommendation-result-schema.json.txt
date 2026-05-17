@@ -1,0 +1,33 @@
+RecommendationResult = {
+    "session_id": str,
+
+    "recommended_episodes": [
+        {
+            "episode_id": str,
+            "show_title": str,
+            "season_number": int,
+            "episode_number": int,
+            "episode_title": str,
+
+            "match_scores": {
+                "overall": float,
+                "mood_match": float,
+                "style_match": float
+            },
+
+            "matched_traits": {
+                "mood": [str],
+                "episode_style": [str]
+            },
+
+            "recommendation_reason": str
+        }
+    ],
+
+    "follow_up_question": str | None,
+
+    "metadata": {
+        "generated_at": datetime,
+        "recommendation_version": str
+    }
+}

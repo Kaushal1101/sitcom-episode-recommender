@@ -1,0 +1,56 @@
+{
+    "identity": {
+        "episode_id": "office_s2e14",
+        "show_id": "the_office",
+        "show_title": "The Office",
+        "season_number": 2,
+        "episode_number": 14,
+        "episode_title": "The Carpet",
+        "air_date": "2006-01-26",
+    },
+    "content": {
+        "summary": "Michael tries to identify who ruined his carpet...",
+        "plot_highlights": ["Michael is upset", "Jim and Dwight investigate"],
+        "source_url": "..."
+    },
+    "structure": {
+        "runtime_minutes": 22,
+        "is_standalone": True,
+        "is_special_episode": False,
+        "special_type": None
+    },
+    "characters": {
+        "characters_involved": ["Michael", "Jim", "Dwight"],
+        "primary_characters": ["Michael"],
+        "character_focus": "Michael"
+    },
+    "mood": {
+        "tone": ["awkward", "lighthearted"],
+        "energy_level": 0.4,
+        "humor_level": 0.3,
+        "comfort_level": 0.7,
+        "sadness_level": 0.1,
+        "tags": ["workplace", "comedy"]
+    },
+    "episode_style": {
+        "novelty_level": 0.8,
+        "specialness": 0.9,
+        "setting_variation": 0.7,
+        "continuity_heaviness": 0.6,
+        "stakes_level": 0.7,
+        "experimental_style": 0.4
+    },
+    "guest_features": {
+        "guest_stars": ["Idris Elba"],
+        "guest_star_prominence": 0.8
+    },
+    "model": {
+        "embedding": [...],
+        "embedding_source": "summary_v1"
+    },
+    "provenance": {
+        "sources": ["tmdb"], ["wikipedia"]
+        "updated_at": "2026-05-15T00:00:00Z",
+        "confidence_score": 0.86
+    }
+}

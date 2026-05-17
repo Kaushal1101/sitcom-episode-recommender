@@ -1,0 +1,100 @@
+---
+description: Output contract for extracted_data.json — the scraper's only deliverable.
+globs:
+  - backend/scraping/**
+  - data/raw/**
+alwaysApply: false
+---
+# Data Spec: `extracted_data.json`
+
+Every scraped episode produces one file at `data/raw/{episode_id}/extracted_data.json`.
+
+`episode_id` format: `{series_slug}_s{season:02d}_e{episode:02d}` — e.g. `the_office_s02_e04`.
+
+---
+
+## Full schema
+
+```json
+{
+  "episode_id": "the_office_s02_e04",
+
+  "metadata": {
+    "episode_id": "the_office_s02_e04",
+    "series_title": "The Office",
+    "series_slug": "the_office",
+    "episode_title": "The Fire",
+    "season_number": 2,
+    "episode_number": 4,
+    "air_date": "2006-01-19",
+    "provenance": {
+      "source": "fandom_wiki",
+      "wiki_page_title": "The_Fire",
+      "wiki_origin": "https://theoffice.fandom.com",
+      "wiki_api_url": "https://theoffice.fandom.com/api.php?action=parse&page=The_Fire&..."
+    }
+  },
+
+  "narrative": {
+    "cold_open": "string or null",
+    "synopsis": "string or null",
+    "cast": {
+      "main": ["Steve Carell as Michael Scott", "John Krasinski as Jim Halpert"],
+      "supporting": ["..."],
+      "recurring": ["..."],
+      "other": []
+    }
+  }
+}
+```
+
+---
+
+## Field rules
+
+| Field | Rule |
+|---|---|
+| `episode_id` (root) | Must match the directory name and `metadata.episode_id`. |
+| `metadata.air_date` | ISO date string (`YYYY-MM-DD`) parsed from wiki infobox, or `null` if not found. Never a placeholder. |
+| `metadata.provenance.source` | Always `"fandom_wiki"`. Not show-specific. |
+| `narrative.cold_open` | Text from the `Cold_open` or `Cold_Open` section. `null` if section is absent or empty. |
+| `narrative.synopsis` | Text from `Summary` section, falling back to `Synopsis` section. `null` if neither exists. |
+| `narrative.cast` | Always has all four keys: `main`, `supporting`, `recurring`, `other`. Each is a list of strings (may be empty list `[]`). Each string is a full credit line, e.g. `"Steve Carell as Michael Scott"`. |
+
+---
+
+## What is NOT in this file
+
+These keys existed in the old project (`sitcom-ml-project`) as transitional fields. **Do not include them:**
+
+- `narrative.plot` — was cold_open + synopsis concatenated
+- `narrative.plot_sections_used`
+- `narrative.trivia`
+- `narrative.cast_text_debug`
+- `narrative.lede_text`
+- `social` — the entire top-level key
+
+If you see any of these in the output, it is a bug.
+
+---
+
+## Other files written per episode
+
+These are cached artifacts. They are not the primary contract but must be present:
+
+| File | Contents |
+|---|---|
+| `wiki_parse_api.json` | Raw MediaWiki parse API JSON response |
+| `wiki_article_from_api.html` | Full article HTML fragment from the API |
+| `wiki_extracted.json` | Parsed sections dict + infobox text + lede text |
+
+---
+
+## Combined episodes
+
+When one wiki page covers two broadcast episodes (e.g. S4E01 and S4E02 both on page `Fun_Run`):
+- One HTTP fetch is made
+- Two directories are written: `data/raw/the_office_s04_e01/` and `data/raw/the_office_s04_e02/`
+- Each gets its own `extracted_data.json` with the correct `episode_number` and `episode_id`
+- `metadata.season_number` and `metadata.episode_number` are specific to each file (not shared)
+- All other narrative content is duplicated (same synopsis, same cast — the wiki page covers both)

@@ -1,0 +1,50 @@
+SessionState = {
+    "session_id": str,
+
+    "conversation_history": [
+        {
+            "message": str,
+            "timestamp": datetime
+        }
+    ],
+
+    "current_preferences": {
+        "mood": {
+            "energy": float,
+            "humor": float,
+            "sadness": float,
+            "comfort": float
+        },
+
+        "episode_style": {
+            "specialness": float,
+            "novelty": float,
+            "setting_variation": float,
+            "continuity_heaviness": float
+        }
+    },
+
+    "hard_constraints": {
+        "excluded_shows": [str],
+        "excluded_episodes": [str],
+        "excluded_tags": [str],
+        "max_runtime_minutes": int | None,
+        "min_runtime_minutes": int | None
+    },
+
+    "recommendation_context": {
+        "previously_recommended": [str],
+        "accepted_recommendations": [str],
+        "rejected_recommendations": [str]
+    },
+
+    "clarification_state": {
+        "awaiting_clarification": bool,
+        "pending_question": str | None
+    },
+
+    "timestamps": {
+        "created_at": datetime,
+        "last_updated": datetime
+    }
+}

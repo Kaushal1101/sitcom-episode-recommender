@@ -1,0 +1,409 @@
+---
+description: Scraping implementation rules — file structure, signatures, ordering, and verification.
+globs:
+  - backend/scraping/**
+  - backend/pipeline/**
+  - pyproject.toml
+alwaysApply: false
+---
+# Scraping Implementation Guide
+
+**Full plan:** `docs/SCRAPING_PLAN.md` — read it before starting.
+**Output contract:** `docs/data_spec.mdc` (or `.cursor/rules/data_spec.mdc`) — what `extracted_data.json` must contain.
+
+---
+
+## File map
+
+```
+backend/scraping/
+  __init__.py
+  series_config.py        ← NEW
+  episode_ref.py          ← ADAPTED from ../sitcom-ml-project/backend/scraping/episode_ref.py
+  season_discoverer.py    ← NEW
+  http_client.py          ← COPY UNCHANGED from ../sitcom-ml-project/backend/scraping/http_client.py
+  extracted_data.py       ← ADAPTED from ../sitcom-ml-project/backend/scraping/extracted_data.py
+  runner.py               ← ADAPTED from ../sitcom-ml-project/backend/scraping/runner.py
+  providers/
+    __init__.py
+    fandom_wiki.py        ← ADAPTED from ../sitcom-ml-project/backend/scraping/providers/wiki_fandom.py
+
+backend/pipeline/
+  __init__.py
+  __main__.py             ← NEW — plain Python CLI, no LangGraph
+```
+
+---
+
+## Step 1 — Scaffold
+
+Create all `__init__.py` files and `pyproject.toml`. See pyproject.toml spec at the bottom of this file.
+
+---
+
+## Step 2 — `http_client.py`
+
+**Copy unchanged** from `../sitcom-ml-project/backend/scraping/http_client.py`. Do not modify.
+
+---
+
+## Step 3 — `series_config.py`
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass
+
+@dataclass(frozen=True, slots=True)
+class SeriesConfig:
+    series_slug: str          # e.g. "the_office"
+    series_title: str         # e.g. "The Office"
+    wiki_origin: str          # e.g. "https://theoffice.fandom.com"
+    season_page_template: str # e.g. "Season_{n}" — used to build season page titles
+
+THE_OFFICE = SeriesConfig(
+    series_slug="the_office",
+    series_title="The Office",
+    wiki_origin="https://theoffice.fandom.com",
+    season_page_template="Season_{n}",
+)
+```
+
+No other series yet. THE_OFFICE is the only constant needed for the MVP.
+
+---
+
+## Step 4 — `episode_ref.py`
+
+**Key change from old project:** `make_episode_id` moves here from `backend.db.repositories`. No DB import.
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass
+
+
+def make_episode_id(series_slug: str, season: int, episode: int) -> str:
+    return f"{series_slug}_s{season:02d}_e{episode:02d}"
+
+
+@dataclass(frozen=True, slots=True)
+class EpisodeRef:
+    series_slug: str
+    season_number: int
+    episode_number: int
+    wiki_origin: str          # e.g. "https://theoffice.fandom.com"
+    wiki_page_title: str      # MediaWiki page title, e.g. "The_Fire"
+    linked_episode_numbers: tuple[int, ...] = ()
+
+    @property
+    def episode_id(self) -> str:
+        return make_episode_id(self.series_slug, self.season_number, self.episode_number)
+
+    def all_episode_numbers(self) -> tuple[int, ...]:
+        nums = [self.episode_number, *self.linked_episode_numbers]
+        return tuple(sorted(set(nums)))
+
+    def all_episode_ids(self) -> tuple[str, ...]:
+        return tuple(
+            make_episode_id(self.series_slug, self.season_number, n)
+            for n in self.all_episode_numbers()
+        )
+```
+
+Then add the combined episode overrides dict. These are episodes where one wiki page covers multiple broadcast episodes. Discovery cannot detect these automatically — they must be listed here:
+
+```python
+# Keys: (series_slug, season_number, episode_number)
+# Value: the EpisodeRef to use instead of the auto-discovered one.
+# Both episode numbers in a combined pair must have an entry pointing to the same EpisodeRef.
+THE_OFFICE_COMBINED_OVERRIDES: dict[tuple[str, int, int], EpisodeRef] = {
+    ("the_office", 4, 1): EpisodeRef(
+        series_slug="the_office",
+        season_number=4,
+        episode_number=1,
+        wiki_origin="https://theoffice.fandom.com",
+        wiki_page_title="Fun_Run",
+        linked_episode_numbers=(2,),
+    ),
+    ("the_office", 4, 2): EpisodeRef(
+        series_slug="the_office",
+        season_number=4,
+        episode_number=2,
+        wiki_origin="https://theoffice.fandom.com",
+        wiki_page_title="Fun_Run",
+        linked_episode_numbers=(1,),
+    ),
+    # Add more combined episodes here as discovered.
+}
+
+# Combined overrides for all supported series.
+COMBINED_OVERRIDES: dict[tuple[str, int, int], EpisodeRef] = {
+    **THE_OFFICE_COMBINED_OVERRIDES,
+}
+```
+
+Do NOT add the old `_EPISODE_REGISTRY`, `_THE_OFFICE_S02_REFS`, or `ref_for_episode_id`. Those are replaced by `SeasonDiscoverer`.
+
+---
+
+## Step 5 — `season_discoverer.py`
+
+**This is the most important new file.** Before writing the parser, you MUST fetch and inspect the actual season page HTML.
+
+### Pre-implementation step (required)
+Fetch the Season 2 page via the MediaWiki parse API and inspect its HTML:
+```
+GET https://theoffice.fandom.com/api.php?action=parse&page=Season_2&prop=text&formatversion=2&format=json
+```
+Find the episode table in the returned HTML. Identify:
+- The CSS class or structure of the episode table rows
+- Which column contains the episode number
+- Which column contains the episode title link (whose `href` gives the wiki page title)
+
+Write the parser based on what you actually find — do not assume structure.
+
+### Class interface
+```python
+from __future__ import annotations
+from pathlib import Path
+from backend.scraping.series_config import SeriesConfig
+from backend.scraping.episode_ref import EpisodeRef, COMBINED_OVERRIDES, make_episode_id
+from backend.scraping.http_client import fetch_get
+
+
+class SeasonDiscoverer:
+    def __init__(self, series_config: SeriesConfig) -> None:
+        self.series_config = series_config
+
+    def discover(self, season_number: int) -> list[EpisodeRef]:
+        """
+        Fetch the fandom wiki season page and return one EpisodeRef per episode.
+        Combined episode overrides from COMBINED_OVERRIDES are applied after discovery.
+        Episodes already covered by a combined override are replaced — not duplicated.
+        """
+        ...
+
+    def _season_page_title(self, season_number: int) -> str:
+        return self.series_config.season_page_template.format(n=season_number)
+
+    def _fetch_season_html(self, season_number: int) -> str:
+        """Returns the article HTML fragment from the MediaWiki parse API."""
+        ...
+
+    def _parse_episode_refs(self, html: str, season_number: int) -> list[EpisodeRef]:
+        """
+        Parse the episode table from the season page HTML.
+        Returns EpisodeRef per row, using wiki page title from the episode link href.
+        Extract the wiki page title from href like /wiki/The_Dundies → "The_Dundies".
+        """
+        ...
+```
+
+### Combined override application logic
+After `_parse_episode_refs` returns the auto-discovered list, apply overrides:
+```python
+overridden: list[EpisodeRef] = []
+seen_page_titles: set[str] = set()
+for ref in discovered:
+    key = (self.series_config.series_slug, season_number, ref.episode_number)
+    if key in COMBINED_OVERRIDES:
+        override = COMBINED_OVERRIDES[key]
+        if override.wiki_page_title not in seen_page_titles:
+            overridden.append(override)
+            seen_page_titles.add(override.wiki_page_title)
+        # else: secondary episode in combined pair — skip, runner handles it via all_episode_ids()
+    else:
+        overridden.append(ref)
+return overridden
+```
+
+### Error behavior
+- If the season page returns 404 or the episode table is not found: raise `ValueError` with a clear message including the URL attempted.
+- If a row in the table cannot be parsed (missing episode number or link): log a warning and skip that row. Do not crash.
+
+---
+
+## Step 6 — `providers/fandom_wiki.py`
+
+**Adapted from** `../sitcom-ml-project/backend/scraping/providers/wiki_fandom.py`.
+
+**Changes:**
+- Rename `DunderpediaWikiProvider` → `FandomWikiProvider`
+- Rename `fetch_dunderpedia_article` → `fetch_fandom_article`
+- Constructor: `FandomWikiProvider(series_config: SeriesConfig, data_root: Path)`
+- The `wiki_origin` comes from `series_config.wiki_origin` — not hardcoded
+- All parsing functions (`_mw_api_parse_url`, `_parse_sections_from_html`, `_extract_infobox_and_lede`, `_section_text_after_h2`) are **copied unchanged**
+- `WikiArticleResult` dataclass is **copied unchanged**
+
+The `fetch_fandom_article` signature:
+```python
+def fetch_fandom_article(ref: EpisodeRef, *, series_config: SeriesConfig, data_root: Path) -> WikiArticleResult:
+    ...
+```
+
+`FandomWikiProvider.fetch_episode` calls `fetch_fandom_article` and passes `self.series_config`.
+
+---
+
+## Step 7 — `extracted_data.py`
+
+**Adapted from** `../sitcom-ml-project/backend/scraping/extracted_data.py`.
+
+**Keep unchanged:**
+- All cast parsing logic: `_normalize_cast_lines`, `_parse_cast_buckets_from_html`, `_parse_cast_buckets`, `_split_cast_lines`, `_looks_like_name_line`, `_bucket_for_heading`
+- `COLD_OPEN_IDS`, `SUMMARY_IDS`, `CAST_BUCKETS` constants
+- `_first_non_empty`, `_parse_air_date_from_infobox`
+- `narrative_plot_text` (used internally and by runner for evidence reporting)
+- `write_extracted_data`
+
+**Change `build_extracted_data` signature:**
+```python
+def build_extracted_data(
+    ref: EpisodeRef,
+    wiki: WikiArticleResult,
+    series_config: SeriesConfig,
+    *,
+    season_number: int | None = None,
+    episode_number: int | None = None,
+    episode_id: str | None = None,
+) -> dict[str, Any]:
+```
+`series_config` replaces the old `series_title: str = "The Office"` hardcode.
+
+**Drop from output — do not include these keys:**
+- `narrative.plot`
+- `narrative.plot_sections_used`
+- `narrative.trivia`
+- `narrative.cast_text_debug`
+- `narrative.lede_text`
+- The entire `social` key
+
+**Set `provenance.source = "fandom_wiki"` (not `"dunderpedia_fandom"`).**
+
+See `.cursor/rules/data_spec.mdc` for the exact output shape.
+
+---
+
+## Step 8 — `runner.py`
+
+**Adapted from** `../sitcom-ml-project/backend/scraping/runner.py`.
+
+**Changes:**
+- Remove `from backend.db.repositories import make_episode_id` — import from `episode_ref` instead
+- Replace `DunderpediaWikiProvider` with `FandomWikiProvider`
+- Signature: `run_scrape_for_ref(ref: EpisodeRef, series_config: SeriesConfig, data_root: Path) -> dict[str, Any]`
+- Pass `series_config` to `FandomWikiProvider` and `build_extracted_data`
+
+**Keep unchanged:**
+- "Scrape once, write N" logic for combined episodes (the `for ep_num in ref.all_episode_numbers()` loop)
+- Raw file mirroring to secondary episode dirs
+- Return dict structure (episode_id, files_written, evidence, etc.)
+
+Remove the `previews` key from the return dict — it was only useful for LangGraph state debugging.
+
+---
+
+## Step 9 — `pipeline/__main__.py`
+
+Plain Python CLI. **No LangGraph.** No graph, no StateGraph, no TypedDict state.
+
+### CLI interface
+```
+python -m backend.pipeline --episode-id the_office_s02_e04
+python -m backend.pipeline --season the_office 2
+python -m backend.pipeline --season the_office 3
+python -m backend.pipeline --all-seasons the_office
+python -m backend.pipeline --season the_office 2 --skip-scrape   # dry run
+python -m backend.pipeline --season the_office 2 --json          # JSON summary output
+```
+
+### Arg definitions
+| Arg | Type | Meaning |
+|---|---|---|
+| `--episode-id <id>` | str | Scrape one episode. SeasonDiscoverer is NOT used — construct EpisodeRef from the id or look it up from combined overrides. |
+| `--season <slug> <n>` | str, int | Discover + scrape all episodes in season n of series `slug`. |
+| `--all-seasons <slug>` | str | Discover + scrape all seasons 1–9 for The Office (or configured range). |
+| `--skip-scrape` | flag | Print what would be scraped, don't fetch. |
+| `--json` | flag | Print result summary as JSON to stdout. |
+
+### Series resolution
+Maintain a dict mapping `series_slug → SeriesConfig`:
+```python
+SERIES_REGISTRY: dict[str, SeriesConfig] = {
+    "the_office": THE_OFFICE,
+}
+```
+
+### `--episode-id` without discovery
+When `--episode-id` is given, check `COMBINED_OVERRIDES` first. If not found, the id must be parseable: split on `_s` and `_e` to recover series_slug, season, episode. Then build an EpisodeRef — but you don't have the `wiki_page_title`. In this case, raise a clear error: `--episode-id requires the episode to be in COMBINED_OVERRIDES or use --season to discover it first.`
+
+Actually: simplify. When `--episode-id` is given, run discovery for that episode's season, then find the matching ref. This keeps discovery as the single source of truth.
+
+### Progress reporting
+For `--season` and `--all-seasons`: print progress per episode to stderr (`scraping the_office_s02_e01 ...`). Print summary at the end (how many succeeded, how many failed).
+
+---
+
+## pyproject.toml
+
+```toml
+[project]
+name = "sitcom-episode-recommender"
+version = "0.1.0"
+description = "Sitcom episode recommender — scraping layer"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+```
+
+---
+
+## Verification
+
+After implementing, verify with these commands (from repo root with `PYTHONPATH=.` or after `pip install -e .`):
+
+```bash
+# Full season scrape (Season 2)
+python -m backend.pipeline --season the_office 2
+
+# Spot-check specific episodes
+python -m backend.pipeline --season the_office 2 --json | python -m json.tool
+
+# Confirm output files exist
+ls data/raw/the_office_s02_e01/
+ls data/raw/the_office_s02_e22/
+
+# Confirm extracted_data.json shape on two episodes
+python -c "import json; d=json.load(open('data/raw/the_office_s02_e04/extracted_data.json')); print(list(d.keys())); print(list(d['narrative'].keys()))"
+# Expected keys: ['episode_id', 'metadata', 'narrative']
+# Expected narrative keys: ['cold_open', 'synopsis', 'cast']
+
+# Confirm no legacy fields
+python -c "import json; d=json.load(open('data/raw/the_office_s02_e04/extracted_data.json')); assert 'social' not in d; assert 'plot' not in d['narrative']; print('clean')"
+```
+
+Also verify a combined episode (S4):
+```bash
+python -m backend.pipeline --season the_office 4
+ls data/raw/the_office_s04_e01/extracted_data.json
+ls data/raw/the_office_s04_e02/extracted_data.json
+# Both should exist (one wiki fetch, two outputs)
+```

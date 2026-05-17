@@ -1,0 +1,46 @@
+---
+alwaysApply: true
+---
+# Project: Sitcom Episode Recommender
+
+## What this project is
+A conversational sitcom episode recommender. Users describe a mood or preference; the system recommends specific episodes. It is NOT a general chatbot.
+
+## Current phase: Data pipeline complete
+All three data pipeline phases are implemented and verified. No active Cursor task. See `AGENTS.md` for next session notes.
+
+## Completed layers
+- **Scraping** (`backend/scraping/`, `backend/pipeline/`) — wiki → `extracted_data.json`
+- **Enrichment** (`backend/enrichment/`) — DeBERTa zero-shot → `mood_enriched.json`
+- **Mood vectors** (`backend/embedding/`) — linear algebra → 17-dim → `mood_vector.json` + ChromaDB `episode_mood_vectors`
+
+## Hard constraints — do not violate these
+- **No LangGraph.** The pipeline is plain Python. No graph, no StateGraph, no StateDict.
+- **No database other than ChromaDB.** No SQLite, no SQLAlchemy, no Alembic, no ORM.
+- **No modifications to completed layers.** Do not touch `backend/scraping/`, `backend/enrichment/`, or `backend/embedding/` unless fixing a confirmed bug.
+- **No social data.** No Reddit, no TMDB, no external API beyond the fandom wiki.
+- **No merging of vector types.** Mood vectors (17-dim) and semantic vectors (384-dim) live in separate ChromaDB collections. Never combine them into one collection.
+
+## Runtime dependencies (current)
+```
+httpx>=0.27
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+python-dotenv>=1.0
+torch>=2.0
+transformers>=4.40
+numpy>=1.26
+chromadb>=0.5
+sentence-transformers>=2.7
+```
+
+## Architecture context (do not implement — awareness only)
+The project has three major modules: UI, Conversation Strategy Module (CSM), and Recommendation Engine. Scraping feeds the Recommendation Engine's data store. The scraper has no awareness of these modules.
+
+## Reference project
+The old implementation lives at `../sitcom-ml-project/`. You may read files there for reference but do not copy them blindly — the new project makes deliberate changes. Key differences from the old project:
+- No LangGraph pipeline
+- No hardcoded episode registry (replaced by dynamic season discovery)
+- No DB dependency in scraping
+- Generic `FandomWikiProvider` (not Dunderpedia-specific)
+- Cleaned `extracted_data.json` (no legacy transitional fields)
