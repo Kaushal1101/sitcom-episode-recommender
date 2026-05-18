@@ -30,78 +30,48 @@ The old scraper produces `extracted_data.json` with raw text (synopsis, cold_ope
 
 ---
 
-## 2. Target Project Structure
+## 2. Actual Project Structure (as-built)
 
 ```
 sitcom-episode-recommender/
 ├── backend/
-│   ├── scraping/                  # Migrated from old project
-│   │   ├── __init__.py
-│   │   ├── episode_ref.py         # EpisodeRef + registry
-│   │   ├── extracted_data.py      # Raw JSON builder
-│   │   ├── http_client.py         # HTTP with jitter/UA rotation
-│   │   ├── runner.py              # Scrape orchestrator (one fetch, N writes)
+│   ├── cli_utils.py               # Shared CLI helpers (SERIES_REGISTRY, repo_root, list_episode_ids, etc.)
+│   ├── scraping/                  # Scraping layer ✓
+│   │   ├── episode_ref.py         # EpisodeRef dataclass + COMBINED_OVERRIDES
+│   │   ├── extracted_data.py      # Raw JSON builder (synopsis, cold_open, cast)
+│   │   ├── http_client.py         # HTTP GET with jitter/UA rotation
+│   │   ├── runner.py              # Scrape orchestrator (one fetch, N writes for combined episodes)
+│   │   ├── season_discoverer.py   # Auto-discovers episode list from Fandom season pages
+│   │   ├── series_config.py       # SeriesConfig dataclass + THE_OFFICE constant
 │   │   └── providers/
-│   │       ├── __init__.py
-│   │       └── wiki_fandom.py     # Dunderpedia MediaWiki parse API
+│   │       └── fandom_wiki.py     # Fandom MediaWiki parse API + HTML extraction
 │   │
-│   ├── enrichment/                # NEW — converts raw text → vectors
-│   │   ├── __init__.py
-│   │   ├── mood_tagger.py         # Produces mood float fields from synopsis
-│   │   └── style_tagger.py        # Produces episode_style float fields
+│   ├── enrichment/                # Enrichment layer ✓
+│   │   ├── mood_tagger.py         # DeBERTa v3 zero-shot: 4 mood scalars + 13 tone labels
+│   │   └── text_formatter.py      # Formats extracted_data → NLI premise text
 │   │
-│   ├── embedding/                 # NEW — converts episode text → semantic vectors
-│   │   ├── __init__.py
-│   │   └── episode_embedder.py    # Calls embedding model, writes to vector DB
+│   ├── embedding/                 # Mood vector layer ✓
+│   │   ├── episode_vectorizer.py  # Builds 17-dim L2-normalized vector from mood_enriched.json
+│   │   └── chroma_store.py        # ChromaDB client wrapper (collection: episode_mood_vectors)
 │   │
-│   ├── db/                        # Episode DB (SQLite)
-│   │   ├── __init__.py
-│   │   ├── models.py              # SQLAlchemy models (extended for new schema)
-│   │   ├── repositories.py        # Upsert helpers, make_episode_id
-│   │   ├── session.py             # DB session factory
-│   │   └── character_repo.py      # Character helpers (carry over)
+│   ├── db/                        # Episode DB layer ✓
+│   │   ├── setup.py               # CREATE TABLE IF NOT EXISTS episodes (plain sqlite3)
+│   │   └── ingestor.py            # INSERT OR REPLACE from extracted_data.json + mood_enriched.json
 │   │
-│   ├── vector_db/                 # NEW — Vector DB abstraction
-│   │   ├── __init__.py
-│   │   ├── client.py              # ChromaDB client wrapper
-│   │   └── episode_collection.py  # Episode vector CRUD
+│   ├── recommender/               # Recommendation engine (planned — Phase 5)
 │   │
-│   ├── ingestion/                 # Reads raw JSON → SQLite + Vector DB
-│   │   ├── __init__.py
-│   │   └── episode_ingestor.py    # Replaces wiki_sqlite.py; handles full schema
-│   │
-│   ├── rec_engine/                # Recommendation Engine (new)
-│   │   ├── __init__.py
-│   │   ├── retriever.py           # Vector search → candidate set
-│   │   ├── filter.py              # Hard constraint filtering
-│   │   ├── reranker.py            # Score-based reranking
-│   │   ├── confidence.py          # Confidence score computation
-│   │   └── engine.py             # Orchestrates retriever → filter → reranker
-│   │
-│   └── pipeline/                  # CLI entry points
-│       ├── __init__.py
-│       ├── __main__.py            # scrape → enrich → embed → ingest
-│       └── graph.py               # Pipeline step graph
-│
-├── alembic/                       # DB migrations (continued from old project)
-│   └── versions/
-│       ├── 001_initial_schema.py
-│       ├── 002_episode_source_document.py
-│       ├── 003_wiki_only_series_tmdb_nullable.py
-│       ├── 004_episode_contract_fields.py
-│       └── 005_mood_style_vectors.py   # NEW — adds mood/style float columns
+│   └── pipeline/
+│       └── __main__.py            # Scraping CLI entry point
 │
 ├── data/
-│   ├── raw/{episode_id}/          # Scraped JSON artifacts (same as old project)
-│   └── app.sqlite3                # Episode DB
+│   ├── raw/{episode_id}/          # extracted_data.json, mood_enriched.json, mood_vector.json
+│   ├── chroma/                    # ChromaDB (episode_mood_vectors collection)
+│   └── app.sqlite3                # Episode DB (201 rows)
 │
 ├── docs/
-│   └── BACKEND_PLAN.md            # This file
-│
-├── .env.example
-├── pyproject.toml
-├── requirements.txt
-└── CLAUDE.md
+├── AGENTS.md
+├── CLAUDE.md
+└── pyproject.toml
 ```
 
 ---
@@ -174,61 +144,51 @@ This is the critical new piece. After scraping produces raw text, the enrichment
 }
 ```
 
-**Strategy for MVP:** Rule-based, seeded by:
-- `specialness` — holiday/event keyword detection in title or synopsis
-- `continuity_heaviness` — character arc / season finale signals
-- `setting_variation` — location keywords (road trip, convention, etc.)
-- `novelty_level` — inverse of standard workplace format signals
-- `stakes_level` — conflict intensity signals
-- `experimental_style` — mockumentary-breaking signals (talking heads count, direct address)
+**Strategy:** Same zero-shot NLI approach as `mood_tagger.py` — run synopsis text through `cross-encoder/nli-deberta-v3-base` with style-specific label pairs per dimension. No rule-based keyword heuristics needed. Skipped for now; implement after mood enrichment is complete and DB is wired.
 
 ---
 
-## 5. Episode DB (SQLite) — Schema Extension
+## 5. Episode DB (SQLite)
 
-The existing SQLite schema (migrations 001–004) covers:
-- `series`, `episode`, `character`, `episode_character`
-- `episode_source_document`
-- `cold_open`, `synopsis`, `cast_json` (migration 004)
+**No Alembic.** Single `CREATE TABLE IF NOT EXISTS` in `backend/db/setup.py`. No migration history — schema is defined once; recreate the DB if the schema changes during MVP.
 
-### Migration 005: mood and style vector columns
-Add to the `episode` table:
+### Files
+- `backend/db/setup.py` — `setup_db(db_path: Path)` creates the table
+- `backend/db/ingestor.py` — `ingest_episode(episode_id, data_root, db_path)` reads `extracted_data.json` + `mood_enriched.json` and does `INSERT OR REPLACE`
+- `backend/db/__main__.py` — CLI: `--episode-id ID | --season SLUG N | --all SLUG`
+
+### DB location
+`data/app.sqlite3`
+
+### Table: `episodes`
 
 ```sql
--- mood dimensions
-energy_level        REAL,
-humor_level         REAL,
-comfort_level       REAL,
-sadness_level       REAL,
-mood_tags           TEXT,   -- JSON array of strings
-mood_tone           TEXT,   -- JSON array of strings
-
--- episode style dimensions
-novelty_level       REAL,
-specialness         REAL,
-setting_variation   REAL,
-continuity_heaviness REAL,
-stakes_level        REAL,
-experimental_style  REAL,
-
--- structure
-runtime_minutes     INTEGER,
-is_standalone       BOOLEAN,
-is_special_episode  BOOLEAN,
-special_type        TEXT,
-
--- characters
-characters_involved TEXT,   -- JSON array of strings
-primary_characters  TEXT,   -- JSON array of strings
-character_focus     TEXT,
-
--- provenance
-embedding_source    TEXT,   -- e.g. "summary_v1"
-enrichment_version  TEXT,   -- for re-enrichment tracking
-confidence_score    REAL
+CREATE TABLE IF NOT EXISTS episodes (
+    episode_id          TEXT PRIMARY KEY,
+    series_slug         TEXT,
+    series_title        TEXT,
+    season_number       INTEGER,
+    episode_number      INTEGER,
+    episode_title       TEXT,
+    air_date            TEXT,
+    synopsis            TEXT,
+    cold_open           TEXT,
+    cast_main           TEXT,        -- JSON array of strings
+    cast_supporting     TEXT,        -- JSON array of strings
+    cast_recurring      TEXT,        -- JSON array of strings
+    humor_level         REAL,
+    energy_level        REAL,
+    comfort_level       REAL,
+    sadness_level       REAL,
+    tone_labels         TEXT,        -- JSON array of strings
+    enriched_at         TEXT,
+    enrichment_model    TEXT
+)
 ```
 
-**Principle:** SQLite remains the single source of truth for structured metadata and mood/style scalars. The vector DB holds embeddings only and references back to `episode_id`.
+All columns nullable except `episode_id`. Mood columns are NULL if `mood_enriched.json` doesn't exist yet for that episode.
+
+**Principle:** SQLite is the single source of truth for structured metadata and mood scalars. The vector DB holds semantic text embeddings only and references back to `episode_id`. The 17-dimension mood/style vectors are NOT embedded into ChromaDB.
 
 ---
 

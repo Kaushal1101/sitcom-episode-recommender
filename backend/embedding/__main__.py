@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
+from backend.cli_utils import data_root, list_episode_ids, parse_episode_id, repo_root, resolve_series
 from backend.embedding.chroma_store import (
     CHROMA_PATH,
     get_client,
@@ -19,87 +19,33 @@ from backend.embedding.episode_vectorizer import (
     load_mood_enriched,
     write_mood_vector,
 )
-from backend.scraping.series_config import THE_OFFICE, SeriesConfig
-
-SERIES_REGISTRY: dict[str, SeriesConfig] = {
-    "the_office": THE_OFFICE,
-}
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
-def _data_root() -> Path:
-    return _repo_root() / "data" / "raw"
 
 
 def _chroma_path() -> str:
-    return str(_repo_root() / CHROMA_PATH)
-
-
-def _resolve_series(slug: str) -> SeriesConfig:
-    config = SERIES_REGISTRY.get(slug)
-    if config is None:
-        known = ", ".join(sorted(SERIES_REGISTRY))
-        raise SystemExit(f"Unknown series {slug!r}. Known: {known}")
-    return config
-
-
-def _parse_episode_id(episode_id: str) -> tuple[str, int, int]:
-    match = re.fullmatch(r"(.+)_s(\d+)_e(\d+)", episode_id)
-    if not match:
-        raise SystemExit(
-            f"Invalid episode_id {episode_id!r}. Expected {{series_slug}}_s{{season:02d}}_e{{episode:02d}}"
-        )
-    return match.group(1), int(match.group(2)), int(match.group(3))
-
-
-def _episode_id_pattern(series_slug: str) -> re.Pattern[str]:
-    return re.compile(rf"^{re.escape(series_slug)}_s\d{{2}}_e\d{{2}}$")
-
-
-def _list_episode_ids(series_slug: str, *, season_number: int | None = None) -> list[str]:
-    data_root = _data_root()
-    if not data_root.is_dir():
-        return []
-
-    pattern = _episode_id_pattern(series_slug)
-    episode_ids: list[str] = []
-    for entry in data_root.iterdir():
-        if not entry.is_dir():
-            continue
-        episode_id = entry.name
-        if not pattern.match(episode_id):
-            continue
-        if season_number is not None and f"_s{season_number:02d}_" not in episode_id:
-            continue
-        if (entry / "mood_enriched.json").exists():
-            episode_ids.append(episode_id)
-    return sorted(episode_ids)
+    return str(repo_root() / CHROMA_PATH)
 
 
 def _vectorize_episode(
     episode_id: str,
     *,
-    data_root: Path,
+    raw_data_root: Path,
     collection,
     skip_existing: bool,
 ) -> str:
-    out_path = data_root / episode_id / "mood_vector.json"
+    out_path = raw_data_root / episode_id / "mood_vector.json"
     if skip_existing and out_path.exists():
         print(f"skip existing {episode_id}", file=sys.stderr)
         return "existing"
 
     print(f"vectorizing {episode_id} ...", file=sys.stderr)
-    mood_enriched = load_mood_enriched(episode_id, data_root)
+    mood_enriched = load_mood_enriched(episode_id, raw_data_root)
     vector_result = build_episode_vector(mood_enriched)
     if vector_result is None:
         print(f"  skipped (no mood data for {episode_id})", file=sys.stderr)
         return "skipped"
 
-    write_mood_vector(vector_result, data_root)
-    series_slug, season_number, episode_number = _parse_episode_id(episode_id)
+    write_mood_vector(vector_result, raw_data_root)
+    series_slug, season_number, episode_number = parse_episode_id(episode_id)
     upsert_episode(
         collection,
         vector_result,
@@ -112,7 +58,7 @@ def _vectorize_episode(
 
 
 def _run_similar_to(episode_id: str, top_k: int) -> int:
-    vector_path = _data_root() / episode_id / "mood_vector.json"
+    vector_path = data_root() / episode_id / "mood_vector.json"
     if not vector_path.exists():
         raise SystemExit(
             f"Missing {vector_path}. Run vectorization for {episode_id!r} first."
@@ -173,17 +119,17 @@ def main(argv: list[str] | None = None) -> int:
     elif args.season:
         series_slug = args.season[0]
         season_number = int(args.season[1])
-        _resolve_series(series_slug)
-        episode_ids = _list_episode_ids(series_slug, season_number=season_number)
+        resolve_series(series_slug)
+        episode_ids = list_episode_ids(series_slug, season_number=season_number, required_file="mood_enriched.json")
     else:
         series_slug = args.all
-        _resolve_series(series_slug)
-        episode_ids = _list_episode_ids(series_slug)
+        resolve_series(series_slug)
+        episode_ids = list_episode_ids(series_slug, required_file="mood_enriched.json")
 
     if not episode_ids:
         raise SystemExit("No enriched episodes found to vectorize.")
 
-    data_root = _data_root()
+    raw_data_root = data_root()
     collection = get_collection(get_client(_chroma_path()))
 
     vectorized = 0
@@ -195,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             status = _vectorize_episode(
                 episode_id,
-                data_root=data_root,
+                raw_data_root=raw_data_root,
                 collection=collection,
                 skip_existing=args.skip_existing,
             )

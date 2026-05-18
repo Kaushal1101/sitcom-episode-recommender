@@ -3,45 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
-from pathlib import Path
 
+from backend.cli_utils import data_root, parse_episode_id, resolve_series
 from backend.scraping.episode_ref import make_episode_id
 from backend.scraping.runner import run_scrape_for_ref
 from backend.scraping.season_discoverer import SeasonDiscoverer
-from backend.scraping.series_config import THE_OFFICE, SeriesConfig
-
-SERIES_REGISTRY: dict[str, SeriesConfig] = {
-    "the_office": THE_OFFICE,
-}
+from backend.scraping.series_config import SeriesConfig
 
 THE_OFFICE_SEASON_RANGE = range(1, 10)
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
-def _data_root() -> Path:
-    return _repo_root() / "data" / "raw"
-
-
-def _resolve_series(slug: str) -> SeriesConfig:
-    config = SERIES_REGISTRY.get(slug)
-    if config is None:
-        known = ", ".join(sorted(SERIES_REGISTRY))
-        raise SystemExit(f"Unknown series {slug!r}. Known: {known}")
-    return config
-
-
-def _parse_episode_id(episode_id: str) -> tuple[str, int, int]:
-    m = re.fullmatch(r"(.+)_s(\d+)_e(\d+)", episode_id)
-    if not m:
-        raise SystemExit(
-            f"Invalid episode_id {episode_id!r}. Expected format: {{series_slug}}_s{{season:02d}}_e{{episode:02d}}"
-        )
-    return m.group(1), int(m.group(2)), int(m.group(3))
 
 
 def _discover_refs(series_config: SeriesConfig, season_number: int) -> list:
@@ -49,7 +19,7 @@ def _discover_refs(series_config: SeriesConfig, season_number: int) -> list:
 
 
 def _ref_for_episode_id(series_config: SeriesConfig, episode_id: str):
-    series_slug, season, episode = _parse_episode_id(episode_id)
+    series_slug, season, episode = parse_episode_id(episode_id)
     if series_slug != series_config.series_slug:
         raise SystemExit(
             f"Episode {episode_id!r} belongs to {series_slug!r}, not {series_config.series_slug!r}"
@@ -81,7 +51,7 @@ def _scrape_refs(
     *,
     skip_scrape: bool,
 ) -> tuple[list[dict], list[dict]]:
-    data_root = _data_root()
+    raw_data_root = data_root()
     unique_refs = _dedupe_refs(refs)
     results: list[dict] = []
     errors: list[dict] = []
@@ -96,7 +66,7 @@ def _scrape_refs(
         for ep_id in target_ids:
             print(f"scraping {ep_id} ...", file=sys.stderr)
         try:
-            summary = run_scrape_for_ref(ref, series_config, data_root)
+            summary = run_scrape_for_ref(ref, series_config, raw_data_root)
             results.append(summary)
         except Exception as exc:
             print(f"FAILED {ref.episode_id}: {exc}", file=sys.stderr)
@@ -125,16 +95,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.episode_id:
-        series_slug, season, _ = _parse_episode_id(args.episode_id)
-        series_config = _resolve_series(series_slug)
+        series_slug, season, _ = parse_episode_id(args.episode_id)
+        series_config = resolve_series(series_slug)
         ref = _ref_for_episode_id(series_config, args.episode_id)
         refs = [ref]
     elif args.season:
-        series_config = _resolve_series(args.season[0])
+        series_config = resolve_series(args.season[0])
         season_number = int(args.season[1])
         refs = _discover_refs(series_config, season_number)
     else:
-        series_config = _resolve_series(args.all_seasons)
+        series_config = resolve_series(args.all_seasons)
         refs = []
         for season_number in THE_OFFICE_SEASON_RANGE:
             refs.extend(_discover_refs(series_config, season_number))

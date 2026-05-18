@@ -1,27 +1,16 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import unquote, urlencode
+from urllib.parse import unquote
 
 from bs4 import BeautifulSoup
 
 from backend.scraping.episode_ref import COMBINED_OVERRIDES, EpisodeRef
 from backend.scraping.http_client import fetch_get
+from backend.scraping.providers.fandom_wiki import _mw_api_parse_url
 from backend.scraping.series_config import SeriesConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _mw_api_parse_url(origin: str, page_title: str) -> str:
-    base = origin.rstrip("/") + "/api.php"
-    q = {
-        "action": "parse",
-        "page": page_title,
-        "prop": "text",
-        "formatversion": "2",
-        "format": "json",
-    }
-    return f"{base}?{urlencode(q)}"
 
 
 def _wiki_title_from_href(href: str) -> str | None:
