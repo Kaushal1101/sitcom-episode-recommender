@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     comfort_level       REAL,
     sadness_level       REAL,
     tone_labels         TEXT,
+    tone_scores         TEXT,
     enriched_at         TEXT,
     enrichment_model    TEXT
 )

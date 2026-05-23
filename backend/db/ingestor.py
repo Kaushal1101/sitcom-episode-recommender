@@ -36,6 +36,7 @@ def ingest_episode(episode_id: str, data_root: Path, db_path: Path) -> None:
         "comfort_level": None,
         "sadness_level": None,
         "tone_labels": None,
+        "tone_scores": None,
         "enriched_at": None,
         "enrichment_model": None,
     }
@@ -54,6 +55,9 @@ def ingest_episode(episode_id: str, data_root: Path, db_path: Path) -> None:
             tone = mood.get("tone")
             if tone is not None:
                 row["tone_labels"] = json.dumps(tone, ensure_ascii=False)
+            raw_tone = mood.get("raw_scores", {}).get("tone", {})
+            if raw_tone:
+                row["tone_scores"] = json.dumps(raw_tone, ensure_ascii=False)
 
     setup_db(db_path)
 

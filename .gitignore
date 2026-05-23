@@ -10,6 +10,9 @@ data/raw/
 # Vector store (regenerable from mood_enriched.json)
 data/chroma/
 
+# SQLite DB (regenerable via python -m backend.db --all the_office)
+data/app.sqlite3
+
 # Env
 .env
 

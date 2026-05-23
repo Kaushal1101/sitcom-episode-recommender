@@ -6,6 +6,76 @@ Do not put secrets or `.env` contents here.
 
 ---
 
+## 2026-05-23 — Recommendation engine (Phases 1–5)
+
+**Summary:** Built the full recommendation engine across five phases. The engine is
+callable end-to-end via `engine.recommend()` and tested with 48 unit tests.
+
+**Changes:**
+- `backend/db/setup.py` — added `tone_scores TEXT` column to `episodes` table
+- `backend/db/ingestor.py` — writes `tone_scores` from `mood["raw_scores"]["tone"]`
+- `backend/recommender/episode_feature_builder.py` — converts SQLite rows to 17-dim L2-normalized vectors; exports `load_mood_rows` (shared DB loader)
+- `backend/recommender/vector_indexer.py` — populates ChromaDB from SQLite; CLI: `python -m backend.recommender.vector_indexer --all the_office --wipe`
+- `backend/recommender/retriever.py` — top-K Chroma query; supports `series_slug` / `season_number` filters
+- `backend/recommender/reranker.py` — deterministic rescoring: `0.5*sim + 0.3*mood + 0.2*tone`; hard exclusions
+- `backend/recommender/explanation_builder.py` — structured match reasons (mood/tone matches, dominant traits, score breakdown)
+- `backend/recommender/engine.py` — public entry point: retrieve → rerank → explain
+- `tests/recommender/` — 48 unit tests across all five phases
+- `.gitignore` — added `data/app.sqlite3`
+- `docs/RECOMMENDATION_ENGINE_PLAN.md` — renamed from ENGINER typo
+
+**Commands / verification:**
+```bash
+# Rebuild SQLite with tone_scores
+rm data/app.sqlite3 && python -m backend.db --all the_office  # 201 rows, 199 with tone_scores
+
+# Rebuild ChromaDB index
+python -m backend.recommender.vector_indexer --all the_office --wipe  # 199 indexed, 2 skipped
+
+# Run full test suite
+pytest tests/recommender/ -v  # 48/48 passing
+
+# Live end-to-end check
+python -c "
+from pathlib import Path
+from backend.recommender.engine import recommend
+from backend.recommender.episode_feature_builder import load_episode_row, build_features
+row = load_episode_row('the_office_s02_e01', Path('data/app.sqlite3'))
+result = recommend(build_features(row).vector, Path('data/app.sqlite3'), Path('data/chroma'), top_k=5)
+for r in result.ranked: print(r.episode_title, r.final_score)
+"
+```
+
+**Edge cases / notes:**
+- 2 skipped episodes (`s07_e13`, `s09_e05`) have NULL mood data — excluded from Chroma index, return None from `build_features`
+- S5E14/E15 (Stress Relief two-parter) share identical mood scores — will appear as near-duplicates; handle via `excluded_ids` in the session layer
+- Heartwarming/wholesome mood profile returns weaker results — thin signal in enrichment data, not an engine bug
+- `load_mood_rows` extracted from reranker/explanation_builder to eliminate duplication
+
+---
+
+## 2026-05-18 — SQLite episode DB
+
+**Summary:** Completed full-show mood enrichment (177 new + 23 existing + 1 skipped) and built `backend/db/` to ingest `extracted_data.json` + `mood_enriched.json` into `data/app.sqlite3`.
+
+**Changes:**
+- `backend/db/setup.py` — `setup_db()` creates `episodes` table (no Alembic)
+- `backend/db/ingestor.py` — `ingest_episode()` merges JSON files via `INSERT OR REPLACE`
+- `backend/db/__main__.py` — CLI: `--episode-id`, `--season`, `--all`
+
+**Commands / verification:**
+```bash
+python -m backend.enrichment --all the_office --skip-existing   # ~12 min CPU, 177 enriched, 1 skipped
+python -m backend.db --episode-id the_office_s02_e01
+python -m backend.db --all the_office
+sqlite3 data/app.sqlite3 "SELECT COUNT(*), COUNT(humor_level) FROM episodes;"  # 201 rows, 199 with mood
+```
+
+**Edge cases:**
+- `the_office_s07_e13` and `the_office_s09_e05` have `mood_enriched.json` with `skipped: true` — mood columns NULL in SQLite (expected).
+
+---
+
 ## 2026-05-17 — Session close (data pipeline)
 
 **Summary:** No new code this session. Reviewed the completed 17-dim mood vector layer. Discussed adding a BAAI/bge-small-en-v1.5 semantic embedding layer (384-dim, separate ChromaDB collection) — decided against it; the structured mood/tone vectors are sufficient for the current phase. Cleaned up repo and pushed initial commit to git.
