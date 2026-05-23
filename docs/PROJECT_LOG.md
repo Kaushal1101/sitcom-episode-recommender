@@ -6,6 +6,32 @@ Do not put secrets or `.env` contents here.
 
 ---
 
+## 2026-05-23 — Confidence calculator
+
+**Summary:** Designed and implemented the confidence calculator — a deterministic sub-component
+of the recommendation engine that produces a `[0.0, 1.0]` confidence score consumed by the CSM.
+Established `ConfidenceResult` as the stable contract between the two modules.
+
+**Changes:**
+- `backend/recommender/confidence.py` — `compute_confidence()`, `ConfidenceResult`, `TopCandidate`; three-signal formula: top_score (0.5) + normalized_gap (0.3) + normalized_coverage (0.2)
+- `tests/recommender/test_confidence.py` — 8 unit tests including worked-example regression
+- `docs/plans/CONFIDENCE_CALCULATOR_PLAN.md` — new plan; architecture position, formula, edge cases, output contract, CSM threshold alignment
+- `docs/schemas/confidence-result-schema.json.txt` — formal contract schema between confidence calculator and CSM
+- `docs/CAVEATS.md` — new file; small observations and debugging notes (venv requirement, skipped episodes, near-duplicate two-parter, calibration notes)
+
+**Commands / verification:**
+```bash
+source .venv/bin/activate && python -m pytest tests/recommender/test_confidence.py -v
+# 8/8 passing
+```
+
+**Edge cases / notes:**
+- `MAX_EXPECTED_GAP = 0.15` calibrated for single-show (The Office) corpus; retune after adding more shows
+- Coverage signal is raw question count for MVP; future: weight by question type or derive from vector entropy
+- All calibration constants are kwargs — overridable in tests without monkey-patching
+
+---
+
 ## 2026-05-23 — Recommendation engine (Phases 1–5)
 
 **Summary:** Built the full recommendation engine across five phases. The engine is

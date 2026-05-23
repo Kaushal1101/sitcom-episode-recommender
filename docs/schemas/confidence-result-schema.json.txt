@@ -1,0 +1,41 @@
+// Contract between the Confidence Calculator (recommendation engine)
+// and the Conversation Strategy Module (CSM).
+//
+// Produced by: backend/recommender/confidence.py → compute_confidence()
+// Consumed by: CSM (not yet built)
+//
+// The CSM reads `confidence` to select the next interaction branch and
+// reads `top_candidates` to populate item-comparison questions or the
+// final recommendation. All other fields are for debugging and logging.
+
+TopCandidate = {
+    "episode_id":     str,    // e.g. "the_office_s03_e15"
+    "episode_title":  str,
+    "series_slug":    str,
+    "season_number":  int,
+    "episode_number": int,
+    "score":          float   // reranker final_score [0.0, 1.0]
+}
+
+ConfidenceResult = {
+    // Primary signal — CSM branches on this value
+    "confidence":            float,   // [0.0, 1.0]
+
+    // Breakdown (for debugging / logging — CSM should not branch on these)
+    "top_score":             float,   // best candidate's reranker score
+    "score_gap":             float,   // raw gap before normalization
+    "normalized_gap":        float,   // gap after normalization [0.0, 1.0]
+    "normalized_coverage":   float,   // coverage after normalization [0.0, 1.0]
+    "questions_answered":    int,     // raw input count
+
+    // Candidates passed into the calculator, preserved for the CSM
+    "top_candidates": [TopCandidate]
+}
+
+// CSM threshold reference (defined in docs/architecture/conversation-strategy.txt):
+//
+//   confidence < 0.40  → broad attribute question (Multiple Choice)
+//   confidence < 0.60  → Y/N attribute refinement
+//   confidence < 0.70  → item comparison question (Multiple Choice)
+//   confidence < 0.85  → Y/N item comparison
+//   confidence ≥ 0.90  → recommend episode
