@@ -15,6 +15,7 @@ from backend.recommender.episode_feature_builder import (
 YN_POSITIVE: float = 0.8
 YN_NEGATIVE: float = -0.8
 ITEM_STEP: float = 0.3
+ATTRIBUTE_MULTI_STEP: float = 0.5
 
 MOOD_PREF_NAMES: tuple[str, ...] = ("humor", "energy", "comfort", "sadness")
 
@@ -123,6 +124,12 @@ def _write_preference(state: SessionState, intent: str, value: float) -> None:
         state.current_preferences.tone_preferences[intent] = value
 
 
+def _read_preference(state: SessionState, intent: str) -> float:
+    if intent in MOOD_PREF_NAMES:
+        return getattr(state.current_preferences.mood, intent)
+    return state.current_preferences.tone_preferences.get(intent, 0.0)
+
+
 def _clamp(value: float) -> float:
     return max(-1.0, min(1.0, value))
 
@@ -145,7 +152,10 @@ def _apply_attribute(
         return
     if answer not in intent_options:
         return
-    _write_preference(state, intent, intent_options[answer])
+    target = intent_options[answer]
+    current = _read_preference(state, intent)
+    blended = _clamp(current + ATTRIBUTE_MULTI_STEP * (target - current))
+    _write_preference(state, intent, blended)
 
 
 def _apply_item(

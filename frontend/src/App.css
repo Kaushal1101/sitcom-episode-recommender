@@ -1,21 +1,53 @@
+:root {
+  --accent: #6366f1;
+  --accent-dark: #4f46e5;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --text-muted: #64748b;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  font-family: sans-serif;
-  background: #f9f9f9;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #f1f5f9;
   display: flex;
   justify-content: center;
   padding: 48px 16px;
+  line-height: 1.6;
 }
 
 #root {
   width: 100%;
   max-width: 560px;
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+  padding: 40px 36px;
 }
 
-h1 { font-size: 1.4rem; margin-bottom: 32px; }
+h1 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 28px;
+  color: #1e293b;
+}
+
+.tagline {
+  color: var(--text-muted);
+  margin-bottom: 28px;
+  font-size: 0.95rem;
+}
 
 .question { font-size: 1.1rem; margin-bottom: 24px; line-height: 1.5; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.question.loading { animation: pulse 1.2s ease-in-out infinite; }
 
 .options { display: flex; flex-direction: column; gap: 10px; }
 
@@ -23,10 +55,11 @@ h1 { font-size: 1.4rem; margin-bottom: 32px; }
   padding: 10px 16px;
   font-size: 1rem;
   cursor: pointer;
-  border: 1px solid #ccc;
-  background: #fff;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
   text-align: left;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .options button:hover, .yn button:hover,
@@ -44,17 +77,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   flex: 1;
   padding: 10px;
   font-size: 1rem;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
   border-radius: 4px;
 }
 
 .farewell { font-size: 1.1rem; margin-bottom: 24px; }
 
 .episode-option {
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
   border-radius: 4px;
   margin-bottom: 10px;
   overflow: hidden;
+}
+
+.episode-title {
+  padding: 10px 16px 6px;
+  font-weight: 500;
+  font-size: 0.95rem;
 }
 
 .episode-option button {
@@ -62,15 +102,32 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border: none;
   border-radius: 0;
   text-align: left;
-  background: #fff;
+  background: var(--surface);
   font-weight: 500;
 }
 
 .episode-option button:hover { background: #f0f0f0; }
 
+.episode-actions {
+  display: flex;
+  gap: 0;
+}
+
+.episode-actions button {
+  flex: 1;
+}
+
+button.watch-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+}
+
+button.watch-btn:hover { background: var(--accent-dark); }
+
 .synopsis {
   font-size: 0.82rem;
-  color: #555;
+  color: var(--text-muted);
   padding: 6px 16px 10px;
   line-height: 1.5;
   max-height: 80px;
@@ -81,8 +138,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 details {
   margin-top: 32px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   padding: 10px 14px;
   font-size: 0.85rem;
   color: #444;

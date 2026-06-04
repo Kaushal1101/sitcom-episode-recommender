@@ -53,6 +53,7 @@ app.add_middleware(
 
 class AnswerRequest(BaseModel):
     answer: str
+    is_final_selection: bool = False
 
 
 class DecisionResponse(BaseModel):
@@ -163,6 +164,43 @@ def submit_answer(session_id: str, request: AnswerRequest) -> DecisionResponse:
         raise HTTPException(status_code=404, detail="Session not found.")
     if session.last_decision is None:
         raise HTTPException(status_code=400, detail="No pending question.")
+
+    if request.is_final_selection:
+        decision = session.last_decision
+        episode_title: str | None = None
+        if decision.interaction_type is InteractionType.ITEM_MULTI:
+            for c in decision.candidates or []:
+                if request.answer == f"{c.episode_title} ({c.series_slug})":
+                    episode_title = c.episode_title
+                    break
+            short_circuit = True
+        elif decision.interaction_type is InteractionType.ITEM_YN:
+            if decision.candidates:
+                episode_title = decision.candidates[0].episode_title
+            short_circuit = True
+        else:
+            short_circuit = False
+
+        if short_circuit:
+            _apply_state_update(session, request.answer)
+            farewell = (
+                f"Great choice! Enjoy '{episode_title}'."
+                if episode_title
+                else "Great choice! Enjoy it."
+            )
+            interaction_type_name = decision.interaction_type.name
+            del _sessions[session_id]
+            return DecisionResponse(
+                session_id=session_id,
+                question="",
+                interaction_type=interaction_type_name,
+                options=None,
+                candidate_synopses=None,
+                confidence=None,
+                preferences=None,
+                done=True,
+                farewell=farewell,
+            )
 
     _apply_state_update(session, request.answer)
 

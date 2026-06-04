@@ -139,6 +139,40 @@ function App() {
     }
   }
 
+  const handleFinalSelection = async (answer) => {
+    setLoading(true)
+    try {
+      const response = await fetch(
+        `${API_URL}/session/${sessionId}/answer`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ answer, is_final_selection: true }),
+        },
+      )
+      if (!response.ok) {
+        setLoading(false)
+        return
+      }
+      const data = await response.json()
+      if (data.done) {
+        setFarewell(data.farewell ?? 'Goodbye!')
+        setScreen('done')
+        fetch(`${API_URL}/session/${sessionId}`, { method: 'DELETE' })
+      } else {
+        setQuestion(data.question)
+        setInteractionType(data.interaction_type)
+        setOptions(data.options)
+        setCandidateSynopses(data.candidate_synopses ?? null)
+        setConfidence(data.confidence ?? null)
+        setPreferences(data.preferences ?? null)
+        setInputValue('')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleStartOver = () => {
     resetState()
     setScreen('start')
@@ -148,6 +182,7 @@ function App() {
     return (
       <>
         <h1>Sitcom Episode Recommender</h1>
+        <p className="tagline">Tell us your mood. We'll find the episode.</p>
         <div className="submit">
           <button type="button" onClick={startSession} disabled={loading}>
             Start
@@ -174,7 +209,7 @@ function App() {
   return (
     <>
       <h1>Sitcom Episode Recommender</h1>
-      <p className="question">{question}</p>
+      <p className={`question${loading ? ' loading' : ''}`}>{question}</p>
 
       {interactionType === 'OPEN_CHAT' && (
         <div className="text-input">
@@ -216,13 +251,24 @@ function App() {
         <div className="options">
           {(options ?? []).map((option, index) => (
             <div key={option} className="episode-option">
-              <button
-                type="button"
-                onClick={() => handleAnswer(option)}
-                disabled={loading}
-              >
-                {option}
-              </button>
+              <p className="episode-title">{option}</p>
+              <div className="episode-actions">
+                <button
+                  type="button"
+                  onClick={() => handleAnswer(option)}
+                  disabled={loading}
+                >
+                  That one
+                </button>
+                <button
+                  type="button"
+                  className="watch-btn"
+                  onClick={() => handleFinalSelection(option)}
+                  disabled={loading}
+                >
+                  Watch this
+                </button>
+              </div>
               <p className="synopsis">{candidateSynopses?.[index] ?? ''}</p>
             </div>
           ))}
@@ -249,6 +295,16 @@ function App() {
             >
               No
             </button>
+            {interactionType === 'ITEM_YN' && (
+              <button
+                type="button"
+                className="watch-btn"
+                onClick={() => handleFinalSelection(options?.[0] ?? 'Yes')}
+                disabled={loading}
+              >
+                Watch it
+              </button>
+            )}
           </div>
         </>
       )}
