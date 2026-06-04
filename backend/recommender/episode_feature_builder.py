@@ -145,3 +145,18 @@ def load_all_rows(db_path: Path, series_slug: str | None = None) -> list[dict]:
                 (series_slug,),
             )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def load_synopses(episode_ids: list[str], db_path: Path) -> dict[str, str]:
+    """Fetch synopsis for a list of episode_ids. Returns {episode_id: synopsis}."""
+    if not episode_ids:
+        return {}
+    placeholders = ",".join("?" * len(episode_ids))
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT episode_id, synopsis FROM episodes "
+            f"WHERE episode_id IN ({placeholders})",
+            episode_ids,
+        ).fetchall()
+    return {dict(r)["episode_id"]: (dict(r)["synopsis"] or "") for r in rows}

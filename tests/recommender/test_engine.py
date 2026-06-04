@@ -4,14 +4,14 @@ import json
 import sqlite3
 from pathlib import Path
 
-import numpy as np
+import pytest
 
 from backend.db.setup import setup_db
-from backend.recommender.engine import RecommendationResult, recommend
-from backend.recommender.episode_feature_builder import (
-    TONE_DIMENSIONS,
-    build_features,
-)
+from backend.models.session_state import ConversationMessage, SessionState
+from backend.recommender.confidence import ConfidenceResult, TopCandidate
+from backend.recommender.engine import RecommendationEngine
+from backend.recommender.episode_feature_builder import TONE_DIMENSIONS
+from backend.recommender.reranker import RankedCandidate
 from backend.recommender.vector_indexer import index_all
 
 
@@ -79,74 +79,85 @@ def make_indexed(tmp_path: Path, episodes: list[dict]) -> tuple[Path, Path]:
     return db_path, chroma_path
 
 
-def user_vec_from_mood(
-    humor: float = 0.9,
-    energy: float = 0.5,
-    comfort: float = 0.5,
-    sadness: float = 0.1,
-    tone: dict | None = None,
-) -> np.ndarray:
-    """Build a realistic user_vector using the feature builder math."""
-    if tone is None:
-        tone = {label: 0.5 for label in TONE_DIMENSIONS}
-    row = {
-        "episode_id": "user",
-        "humor_level": humor,
-        "energy_level": energy,
-        "comfort_level": comfort,
-        "sadness_level": sadness,
-        "tone_scores": json.dumps(tone),
-    }
-    return build_features(row).vector
+def make_state() -> SessionState:
+    """Build a SessionState with realistic nonzero mood + tone preferences."""
+    state = SessionState()
+    state.current_preferences.mood.humor = 0.9
+    state.current_preferences.mood.energy = 0.5
+    state.current_preferences.mood.comfort = 0.5
+    state.current_preferences.mood.sadness = 0.1
+    for label in TONE_DIMENSIONS:
+        state.current_preferences.tone_preferences[label] = 0.5
+    return state
 
 
-def test_engine_returns_result(tmp_path):
-    episodes = [ep(f"show_s01_e0{i}", number=i) for i in range(1, 6)]
+@pytest.fixture
+def indexed_engine(tmp_path):
+    """RecommendationEngine bound to a DB + Chroma collection of 7 fake episodes."""
+    episodes = [ep(f"show_s01_e{i:02d}", number=i) for i in range(1, 8)]
     db_path, chroma_path = make_indexed(tmp_path, episodes)
-    user_vec = user_vec_from_mood()
-    result = recommend(user_vec, db_path, chroma_path, top_k=3)
-    assert isinstance(result, RecommendationResult)
-    assert len(result.ranked) == 3
-    assert len(result.explanations) == 3
+    engine = RecommendationEngine(db_path, chroma_path)
+    episode_ids = [e["episode_id"] for e in episodes]
+    return engine, episode_ids
 
 
-def test_engine_top_k_respected(tmp_path):
-    episodes = [ep(f"show_s01_e0{i}", number=i) for i in range(1, 8)]
-    db_path, chroma_path = make_indexed(tmp_path, episodes)
-    user_vec = user_vec_from_mood()
-    result = recommend(user_vec, db_path, chroma_path, top_k=3)
-    assert len(result.ranked) <= 3
+def test_get_candidates_returns_n_top_candidates(indexed_engine):
+    engine, _ = indexed_engine
+    state = make_state()
+    candidates = engine.get_candidates(state, n=3)
+    assert len(candidates) == 3
+    assert all(isinstance(c, TopCandidate) for c in candidates)
 
 
-def test_engine_excluded_ids(tmp_path):
-    episodes = [ep(f"show_s01_e0{i}", number=i) for i in range(1, 5)]
-    db_path, chroma_path = make_indexed(tmp_path, episodes)
-    user_vec = user_vec_from_mood()
-    result = recommend(
-        user_vec,
-        db_path,
-        chroma_path,
-        top_k=10,
-        excluded_ids={"show_s01_e01"},
-    )
-    ids = [r.episode_id for r in result.ranked]
-    assert "show_s01_e01" not in ids
+def test_get_candidates_respects_excluded_episodes(indexed_engine):
+    engine, episode_ids = indexed_engine
+    state = make_state()
+    state.hard_constraints.excluded_episodes = [episode_ids[0], episode_ids[1]]
+    candidates = engine.get_candidates(state, n=10)
+    returned_ids = {c.episode_id for c in candidates}
+    assert episode_ids[0] not in returned_ids
+    assert episode_ids[1] not in returned_ids
 
 
-def test_engine_empty_collection(tmp_path):
-    db_path = make_db(tmp_path, [])
-    chroma_path = tmp_path / "chroma"
-    user_vec = user_vec_from_mood()
-    result = recommend(user_vec, db_path, chroma_path, top_k=5)
-    assert result.ranked == []
-    assert result.explanations == []
+def test_get_candidates_respects_previously_recommended(indexed_engine):
+    engine, episode_ids = indexed_engine
+    state = make_state()
+    state.recommendation_context.previously_recommended = [
+        episode_ids[2],
+        episode_ids[3],
+    ]
+    candidates = engine.get_candidates(state, n=10)
+    returned_ids = {c.episode_id for c in candidates}
+    assert episode_ids[2] not in returned_ids
+    assert episode_ids[3] not in returned_ids
 
 
-def test_engine_ranked_and_explanations_aligned(tmp_path):
-    episodes = [ep(f"show_s01_e0{i}", number=i) for i in range(1, 5)]
-    db_path, chroma_path = make_indexed(tmp_path, episodes)
-    user_vec = user_vec_from_mood()
-    result = recommend(user_vec, db_path, chroma_path, top_k=4)
-    ranked_ids = [r.episode_id for r in result.ranked]
-    explanation_ids = [e.episode_id for e in result.explanations]
-    assert ranked_ids == explanation_ids
+def test_get_recommendation_returns_ranked_and_confidence(indexed_engine):
+    engine, _ = indexed_engine
+    state = make_state()
+    result = engine.get_recommendation(state)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    top, confidence = result
+    assert isinstance(top, RankedCandidate)
+    assert isinstance(confidence, ConfidenceResult)
+
+
+def test_get_recommendation_raises_when_all_candidates_excluded(indexed_engine):
+    engine, episode_ids = indexed_engine
+    state = make_state()
+    state.hard_constraints.excluded_episodes = list(episode_ids)
+    with pytest.raises(ValueError, match="No candidates available after filtering."):
+        engine.get_recommendation(state)
+
+
+def test_questions_answered_matches_conversation_history(indexed_engine):
+    engine, _ = indexed_engine
+    state = make_state()
+    state.conversation_history = [
+        ConversationMessage(message="hello"),
+        ConversationMessage(message="something funny"),
+        ConversationMessage(message="not too long"),
+    ]
+    _, confidence = engine.get_recommendation(state)
+    assert confidence.questions_answered == len(state.conversation_history)

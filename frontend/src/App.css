@@ -1,0 +1,120 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: sans-serif;
+  background: #f9f9f9;
+  display: flex;
+  justify-content: center;
+  padding: 48px 16px;
+}
+
+#root {
+  width: 100%;
+  max-width: 560px;
+}
+
+h1 { font-size: 1.4rem; margin-bottom: 32px; }
+
+.question { font-size: 1.1rem; margin-bottom: 24px; line-height: 1.5; }
+
+.options { display: flex; flex-direction: column; gap: 10px; }
+
+.options button, .yn button, .rating button, .submit button, .text-input button {
+  padding: 10px 16px;
+  font-size: 1rem;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.options button:hover, .yn button:hover,
+.rating button:hover, .submit button:hover, .text-input button:hover {
+  background: #f0f0f0;
+}
+
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.yn, .rating { display: flex; gap: 10px; }
+
+.text-input { display: flex; gap: 10px; }
+
+.text-input input {
+  flex: 1;
+  padding: 10px;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.farewell { font-size: 1.1rem; margin-bottom: 24px; }
+
+.episode-option {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.episode-option button {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  background: #fff;
+  font-weight: 500;
+}
+
+.episode-option button:hover { background: #f0f0f0; }
+
+.synopsis {
+  font-size: 0.82rem;
+  color: #555;
+  padding: 6px 16px 10px;
+  line-height: 1.5;
+  max-height: 80px;
+  overflow-y: auto;
+  border-top: 1px solid #eee;
+  margin: 0;
+}
+
+details {
+  margin-top: 32px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+summary { cursor: pointer; font-weight: 500; }
+
+.confidence-bar-track {
+  background: #eee;
+  border-radius: 4px;
+  height: 8px;
+  margin: 6px 0 12px;
+}
+
+.confidence-bar {
+  background: #818cf8;
+  height: 8px;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+.pref-section { margin-top: 10px; }
+
+.pref-section h4 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.pref-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}

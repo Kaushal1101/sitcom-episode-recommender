@@ -12,6 +12,8 @@ dependencies = [
     "transformers>=4.40",
     "numpy>=1.26",
     "chromadb>=0.5",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
 ]
 
 [project.optional-dependencies]
